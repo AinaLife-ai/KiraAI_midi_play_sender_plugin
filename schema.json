@@ -1,0 +1,141 @@
+{
+  "section_basic": {
+    "type": "section",
+    "name": "基础",
+    "collapsed": false,
+    "fields": {
+      "enabled": {
+        "type": "switch",
+        "name": "启用插件",
+        "default": true
+      },
+      "enable_tool": {
+        "type": "switch",
+        "name": "启用LLM工具调用(自然语言)",
+        "default": true,
+        "hint": "开启后bot可在对话中主动调用，用户说'弹一首XXX/来首钢琴版'也能触发。默认开启。"
+      },
+      "enable_command": {
+        "type": "switch",
+        "name": "启用命令词触发",
+        "default": false,
+        "hint": "如 /弹奏 曲名，不经LLM。"
+      },
+      "command_words": {
+        "type": "list",
+        "name": "命令词列表",
+        "default": ["/弹奏", "/弹琴"],
+        "hint": "每行一个，命中任意即触发。"
+      },
+      "default_preset": {
+        "type": "string",
+        "name": "默认乐器",
+        "default": "piano",
+        "options": ["piano", "guitar", "nylon", "organ", "8bit", "square", "strings", "bell", "flute", "default"],
+        "hint": "没指定乐器时的默认音色。"
+      }
+    }
+  },
+  "section_permission": {
+    "type": "section",
+    "name": "权限白名单(仅命令式)",
+    "collapsed": false,
+    "fields": {
+      "allowed_users": {
+        "type": "list",
+        "name": "QQ号白名单",
+        "default": [],
+        "hint": "只对 /弹奏 /弹琴 命令式生效；LLM工具不受限制。空=不限制。"
+      },
+      "allowed_groups": {
+        "type": "list",
+        "name": "群号白名单",
+        "default": [],
+        "hint": "只对命令式生效。空=不限制。"
+      },
+      "permission_denied_message": {
+        "type": "string",
+        "name": "无权限提示语",
+        "default": "❌ 权限不足：你不在本功能白名单内"
+      }
+    }
+  },
+  "section_search": {
+    "type": "section",
+    "name": "搜索与候选",
+    "collapsed": true,
+    "fields": {
+      "search_count": {
+        "type": "integer",
+        "name": "候选谱条数",
+        "default": 5
+      },
+      "auto_pick_top": {
+        "type": "switch",
+        "name": "自动取第一条直下",
+        "default": false,
+        "hint": "关=返回候选让AI挑选或展示给用户；开=直接取搜索结果第一条演奏。"
+      }
+    }
+  },
+  "section_render": {
+    "type": "section",
+    "name": "渲染",
+    "collapsed": true,
+    "fields": {
+      "max_render_seconds": {
+        "type": "integer",
+        "name": "曲谱时长上限(秒)",
+        "default": 600,
+        "hint": "超过此时长的谱不渲染（省CPU与体积）。"
+      },
+      "timeout": {
+        "type": "integer",
+        "name": "网络请求超时秒数",
+        "default": 60
+      }
+    }
+  },
+  "section_cache": {
+    "type": "section",
+    "name": "缓存",
+    "collapsed": true,
+    "fields": {
+      "score_dir": {
+        "type": "string",
+        "name": "谱库目录(相对data/)",
+        "default": "files/midi_lib",
+        "hint": "MIDI 谱文件存放目录，与渲染缓存分离，防止被误删。"
+      },
+      "cache_dir": {
+        "type": "string",
+        "name": "渲染缓存目录(相对data/)",
+        "default": "files/midi_cache",
+        "hint": "渲染好的 OGG 音频缓存目录。同曲同乐器重复点会走缓存。"
+      },
+      "keep_midi": {
+        "type": "switch",
+        "name": "永久保留MIDI谱",
+        "default": true,
+        "hint": "开启=谱库目录的文件永不参与自动清理；关闭=谱子也按缓存上限清理最旧。"
+      },
+      "copy_import_scores": {
+        "type": "switch",
+        "name": "外部谱子自动入谱库",
+        "default": true,
+        "hint": "开启=本地路径/直链/用户上传等外部获得的谱子自动复制一份到谱库(files/midi_lib)，下次点歌直接命中；关闭=直接用原文件，不占谱库空间。"
+      },
+      "max_cache_files": {
+        "type": "integer",
+        "name": "缓存文件上限",
+        "default": 50,
+        "hint": "超过后自动清理最旧的文件（作用于渲染缓存；谱库仅当关闭'永久保留MIDI谱'时参与）。"
+      },
+      "cleanup_count": {
+        "type": "integer",
+        "name": "单次清理数量",
+        "default": 20
+      }
+    }
+  }
+}

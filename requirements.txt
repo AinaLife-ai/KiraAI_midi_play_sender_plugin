@@ -1,0 +1,5 @@
+mido
+numpy
+scipy
+soundfile
+httpx>=0.25
