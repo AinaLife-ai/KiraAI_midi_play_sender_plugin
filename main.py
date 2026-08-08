@@ -371,16 +371,31 @@ class MidiPlaySenderPlugin(BasePlugin):
         event.discard(force=True)
         event.stop()
 
-    # ---------- 入口 C：MIDI 文件消息入库（用户直接发谱子文件） ----------
-    @on.im_message(priority=Priority.HIGH)
-    async def handle_midi_file(self, event: KiraMessageEvent, *_):
-        if not self.enabled or event.adapter.platform != "QQ":
+    # ---------- 入口 C：LLM 唤醒时顺便入库用户发的 MIDI 文件 ----------
+    @on.llm_request(priority=Priority.HIGH)
+    async def import_midi_on_llm(self, event, req: LLMRequest, *_):
+        """LLM 被唤醒（消息进入对话处理）且消息链含 .mid/.midi 文件 → 后台静默入库。
+
+        设计原则：文件入库只在 LLM 确实处理这条消息时发生——消息没唤醒 LLM
+        （bot 没被 @ / 闲聊）就不在后台偷跑，避免不可预期的静默行为与存储占用。
+        后台任务不阻塞 LLM 请求；入库静默（记日志），LLM 正在回复用户，无需插件确认。
+        """
+        if not self.enabled:
             return
-        files = [e for e in event.message.chain
-                 if isinstance(e, File)
-                 and str(getattr(e, "name", "") or "").lower().endswith((".mid", ".midi"))]
-        if not files:
-            return
+        try:
+            files = []
+            for m in getattr(event, "messages", None) or []:
+                for e in getattr(m, "chain", None) or []:
+                    if (isinstance(e, File)
+                            and str(getattr(e, "name", "") or "").lower().endswith((".mid", ".midi"))):
+                        files.append(e)
+            if files:
+                asyncio.create_task(self._import_midi_files(files))
+        except Exception:
+            logger.exception("[midi_play_sender] import midi files failed")
+
+    async def _import_midi_files(self, files: list) -> None:
+        """后台静默入库：有效 MIDI 存入谱库（供'弹奏 xxx'命中），无效只记日志。"""
         saved: list[str] = []
         bad: list[str] = []
         for f in files:
@@ -390,7 +405,6 @@ class MidiPlaySenderPlugin(BasePlugin):
                     logger.warning(f"[midi_play_sender] 文件不可用: {getattr(f, 'name', '')}")
                     continue
                 name = str(f.name or "untitled").rsplit(".", 1)[0]
-                # 试读校验：损坏文件不入库
                 try:
                     midi_synth.midi_duration(src)
                 except midi_synth.MidiRenderError:
@@ -401,17 +415,10 @@ class MidiPlaySenderPlugin(BasePlugin):
                 saved.append(name)
             except Exception:
                 logger.exception("[midi_play_sender] 保存MIDI文件失败")
-        if not saved and not bad:
-            return
-        texts = []
         if saved:
-            texts.append(f"已收到 MIDI 谱子：{'、'.join(saved)}，已存入谱库。说'弹奏 {saved[0]}'就能听。")
+            logger.info(f"[midi_play_sender] LLM 会话中的 MIDI 谱子已静默入库: {saved}")
         if bad:
-            texts.append(f"以下文件不是有效的 MIDI，未入库：{'、'.join(bad)}")
-        await self.ctx.message_processor.send_message_chain(
-            event.session.sid, MessageChain([Text("\n".join(texts))]))
-        event.discard(force=True)
-        event.stop()
+            logger.warning(f"[midi_play_sender] 非有效 MIDI 未入库: {bad}")
 
     # ---------- 核心处理 ----------
     async def _handle_request(self, event, song: str, preset: str, url: str) -> str:
