@@ -395,7 +395,8 @@ class MidiPlaySenderPlugin(BasePlugin):
             logger.exception("[midi_play_sender] import midi files failed")
 
     async def _import_midi_files(self, files: list) -> None:
-        """后台静默入库：有效 MIDI 存入谱库（供'弹奏 xxx'命中），无效只记日志。"""
+        """后台静默入库：有效 MIDI 存入谱库（供'弹奏 xxx'命中），
+        轻微损坏（data byte 越界等）先尝试自动修复，救回则入修复版，无法修复才跳过。"""
         saved: list[str] = []
         bad: list[str] = []
         for f in files:
@@ -405,13 +406,26 @@ class MidiPlaySenderPlugin(BasePlugin):
                     logger.warning(f"[midi_play_sender] 文件不可用: {getattr(f, 'name', '')}")
                     continue
                 name = str(f.name or "untitled").rsplit(".", 1)[0]
+                tmp = None
                 try:
                     midi_synth.midi_duration(src)
                 except midi_synth.MidiRenderError:
-                    bad.append(name)
-                    continue
+                    # 与 _find_local_score/_import_local_score 一致：先尝试自动修复再入库
+                    tmp = Path(str(src) + ".repair.mid")
+                    try:
+                        if not midi_synth.repair_midi_file(src, tmp):
+                            bad.append(name)
+                            continue
+                        midi_synth.midi_duration(tmp)  # 修复后必须能完整解析
+                        src = tmp
+                        logger.warning(f"[midi_play_sender] 收到的坏谱已自动修复: {name}")
+                    except Exception:
+                        bad.append(name)
+                        continue
                 target = self.scores_dir / f"{self._slug(name)}.mid"
                 shutil.copy2(src, target)
+                if tmp is not None:
+                    tmp.unlink(missing_ok=True)  # 清理修复临时文件，不留脏
                 saved.append(name)
             except Exception:
                 logger.exception("[midi_play_sender] 保存MIDI文件失败")
