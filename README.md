@@ -1,4 +1,4 @@
-# 🎹 MIDI演奏语音条（midi_play_sender）v1.0.1
+# 🎹 MIDI演奏语音条（midi_play_sender）v1.0.2
 
 一个给 **KiraAI** 机器人用的插件：你说一首歌名，它**搜索 MIDI 谱 → 用合成器弹出来 → 直接发成 QQ 语音条**。
 
