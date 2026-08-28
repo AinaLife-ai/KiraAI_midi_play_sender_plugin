@@ -83,6 +83,7 @@ async def _get_with_retry(c, url, *, params=None, headers=None):
     """GET 请求 + Cloudflare 间歇错误指数退避重试（502/520/429，0.8s/2s 两次）。
 
     返回 (resp, text)。最终仍非 200 时抛 MidiSrcError（带可读上下文）。
+    重试路径上的响应体会主动 aclose()，避免连接不释放。
     """
     last = None
     for i, delay in enumerate((0, *RETRY_DELAYS)):
@@ -92,6 +93,7 @@ async def _get_with_retry(c, url, *, params=None, headers=None):
         if resp.status_code not in RETRY_STATUS:
             return resp
         last = resp.status_code
+        await resp.aclose()  # 释放连接，避免持续报错时连接堆积
     raise MidiSrcError(f"请求失败(HTTP {last}，已重试 {len(RETRY_DELAYS)} 次)：{url}")
 
 
@@ -146,7 +148,11 @@ async def hamienet_download(page_url: str, out_path) -> str:
 
 @_wrap_net_errors("BitMidi 搜索")
 async def bitmidi_search(query: str, limit: int = 5) -> list[dict]:
-    """BitMidi 站内搜索页。502/520/429 指数退避重试 2 次；其余非 200 / 网络错误抛 MidiSrcError（渠道链可跳过）。"""
+    """BitMidi 站内搜索页。502/520/429 指数退避重试 2 次；其余非 200 / 网络错误抛 MidiSrcError（渠道链可跳过）。
+
+    标题优先取 anchor 的 title 属性（真实文件名，如 "Never-Gonna-Give-You-Up-1.mid"），
+    无 title 时回退 slug 还原（去掉数字后缀）。
+    """
     async with _client() as c:
         c.headers["Referer"] = BITMIDI_REFERER
         resp = await _get_with_retry(c, "https://bitmidi.com/search", params={"q": query})
@@ -155,15 +161,16 @@ async def bitmidi_search(query: str, limit: int = 5) -> list[dict]:
         text = resp.text
     results: list[dict] = []
     seen: set[str] = set()
-    for m in re.finditer(r'href="/([a-z0-9-]+-mid)"', text):
-        slug = m.group(1)
+    for m in re.finditer(r'<a[^>]*href="/([a-z0-9-]+-mid)"[^>]*title="([^"]*)"', text):
+        slug, title = m.group(1), m.group(2)
         if slug in seen:
             continue
         seen.add(slug)
-        results.append({
-            "title": slug[:-4].replace("-", " ").title(),
-            "url": f"https://bitmidi.com/{slug}",
-        })
+        title = title.strip()
+        if title.lower().endswith(".mid"):
+            title = title[:-4]
+        title = title.replace("-", " ").strip() or slug[:-4].replace("-", " ").title()
+        results.append({"title": title, "url": f"https://bitmidi.com/{slug}"})
         if len(results) >= limit:
             break
     return results
@@ -260,18 +267,25 @@ async def pick_midi(song: str, limit: int = 5) -> list[dict]:
 async def try_download_any(cands: list[dict], out_path) -> tuple[str | None, str]:
     """逐个尝试下载候选，返回 (成功保存路径 或 None, 失败原因汇总)。
 
-    下载前先 GET 预检状态码：404/410 直接跳过，不逐个撞。
+    下载前先 HEAD 预检状态码：404/410 直接跳过，不逐个撞；
+    HEAD 不可用（405/网络异常）时跳过预检直接下载。
     """
     errs: list[str] = []
     for c in cands:
         try:
             # 预检：404/410 直接跳过（省一次无效下载）
             if c["url"].startswith(("http://", "https://")):
-                async with _client() as pc:
-                    head = await pc.get(c["url"])
+                skip = False
+                try:
+                    async with _client() as pc:
+                        head = await pc.head(c["url"])
                     if head.status_code in (404, 410):
                         errs.append(f"{c['url']} 页面不存在(HTTP {head.status_code})")
-                        continue
+                        skip = True
+                except httpx.HTTPError:
+                    pass  # HEAD 不可用，跳过预检直接下载
+                if skip:
+                    continue
             await download(c["url"], out_path)
             if is_valid_midi(out_path):
                 return str(out_path), ""
@@ -280,6 +294,31 @@ async def try_download_any(cands: list[dict], out_path) -> tuple[str | None, str
         except Exception as e:
             errs.append(f"{c['url']} {e}")
     return None, "；".join(errs)
+
+
+async def search_and_download(song: str, out_path, limit: int = 5) -> tuple[str | None, str]:
+    """搜索 + 下载一体：bitmidi 候选全灭（404 预检全跳过/下载全失败）时自动兜底 freemidi。
+
+    返回 (成功保存路径 或 None, 失败原因汇总)。
+    """
+    cands = await pick_midi(song, limit)
+    if not cands:
+        return None, f"没找到「{song}」的MIDI谱"
+    ok, err = await try_download_any(cands, out_path)
+    if ok:
+        return ok, ""
+    # 候选全灭且全部来自 bitmidi → freemidi 兜底再试一次
+    if all("bitmidi.com" in c["url"] for c in cands):
+        try:
+            fm = await freemidi_search(song, limit)
+        except MidiSrcError:
+            fm = []
+        if fm:
+            ok2, err2 = await try_download_any(fm, out_path)
+            if ok2:
+                return ok2, ""
+            err = f"{err}；{err2}"
+    return None, err
 
 
 @_wrap_net_errors("直链下载")
