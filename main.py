@@ -533,7 +533,8 @@ class MidiPlaySenderPlugin(BasePlugin):
         lines = [f"找到「{song}」的MIDI谱："]
         for i, c in enumerate(cands, 1):
             host = "bitmidi" if "bitmidi.com" in c["url"] else (
-                "hamienet" if "hamienet.com" in c["url"] else "web")
+                "freemidi" if "freemidi.org" in c["url"] else (
+                    "hamienet" if "hamienet.com" in c["url"] else "web"))
             lines.append(f"{i}. {c.get('title', '')}｜{host}｜{c['url']}")
         lines.append("可直接传 url 再次调用直接演奏，或展示给用户选择。")
         return "\n".join(lines)
